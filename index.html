@@ -105,7 +105,6 @@
   .btn.on{ background:rgba(63,193,201,.5); outline:1px solid var(--accent); }
   .sliderBox{ color:#bcd6e4; font-size:11px; text-align:center; line-height:1.2; }
   .sliderBox input{ width:86px; accent-color:var(--accent); display:block; margin:3px auto 0; }
-  #altBox b{ font-size:15px; color:var(--accent2); font-variant-numeric:tabular-nums; white-space:nowrap; }
 
   /* ---------- 操作說明浮層 ---------- */
   #helpOverlay{
@@ -149,7 +148,6 @@
     #bar{ gap:6px; padding:0 8px; }
     .btn{ padding:8px 9px; font-size:12px; }
     .sliderBox{ display:none; }
-    #altBox{ display:block; }
     #banner .bn{ font-size:17px; }
     #info{ bottom:calc(var(--bar-h) + 16px); width:240px; }
   }
@@ -179,7 +177,7 @@
   <button class="btn" id="btnNext" title="下一個地景">⏭</button>
   <button class="btn" id="btnHome" title="回到太空看整個地球">🌍 地球全景</button>
   <div class="sliderBox">飛行速度<input type="range" id="speed" min="0.3" max="3" step="0.1" value="1"></div>
-  <div class="sliderBox" id="altBox">無人機海拔<br><b id="alt">—</b></div>
+  <div class="sliderBox">地形高度<input type="range" id="exag" min="1" max="3" step="0.1" value="1.5"></div>
   <button class="btn" id="btnHelp" title="鍵盤與滑鼠操作說明">❓ 操作說明</button>
 </div>
 
@@ -318,7 +316,7 @@ const $ = id => document.getElementById(id);
 const listEl = $("list"), panel = $("panel"), toggle = $("panelToggle");
 const banner = $("banner"), bannerName = $("bannerName"), bannerCountry = $("bannerCountry");
 const info = $("info"), infoName = $("infoName"), infoCountry = $("infoCountry"), infoDesc = $("infoDesc");
-const speedInput = $("speed"), altEl = $("alt");
+const speedInput = $("speed"), exagInput = $("exag");
 let speedFactor = 1;
 
 /* ---------- 左側清單（依洲分組，可收合） ---------- */
@@ -464,7 +462,8 @@ $("btnHome").addEventListener("click", () => {
 
 /* ---------- 防撞山：任何時刻相機都不可低於地面 ----------
    每一幀檢查「畫面中心」與「相機正下方」的地形高度，
-   相機一低於地面上方 80m 就立刻拉高（flyTo 動畫進行中不干預）。 */
+   相機一低於地面上方 500m 淨空就立刻拉高（flyTo 動畫進行中不干預）。 */
+const MIN_CLEARANCE = 500;   // 預設離地淨空（公尺）
 let terrainCalib = 1;   // queryTerrainElevation → 世界（誇張後）高度的換算係數
 function groundWorldAt(lngLat){
   if (typeof map.queryTerrainElevation !== "function") return 0;
@@ -480,11 +479,11 @@ function keepAboveTerrain(){
     const gCenterWorld = map.getCameraTargetElevation() || 0;
     const qCenter = typeof map.queryTerrainElevation === "function" ? map.queryTerrainElevation(map.getCenter()) : null;
     if (gCenterWorld > 100 && qCenter > 100) {
-      terrainCalib = Math.min(EXAG, Math.max(1, gCenterWorld / qCenter));
+      terrainCalib = Math.min(+exagInput.value || 1.5, Math.max(1, gCenterWorld / qCenter));
     }
     const camAlt = t.getCameraAltitude();
     const ground = Math.max(gCenterWorld, groundWorldAt(t.getCameraLngLat()), groundWorldAt(map.getCenter()));
-    if (camAlt < ground + 80 && map.getZoom() > 3) {
+    if (camAlt < ground + MIN_CLEARANCE && map.getZoom() > 3) {
       map.jumpTo({ zoom: map.getZoom() - 0.25 });   // 逐幀快速爬升直到脫離地形
     }
   } catch (err) { /* 地形資料尚未就緒時略過 */ }
@@ -492,23 +491,7 @@ function keepAboveTerrain(){
 
 /* ---------- 滑桿 ---------- */
 speedInput.addEventListener("input", () => speedFactor = +speedInput.value);
-
-/* ---------- 無人機海拔高度顯示 ---------- */
-const EXAG = 1.5;   // 與 style.terrain.exaggeration 相同
-function updateAltitude(){
-  try {
-    const camAlt = map.transform.getCameraAltitude();          // 誇張地形世界中的相機高度
-    const gWorld = map.getCameraTargetElevation() || 0;        // 誇張後的地面高度
-    const realAlt = Math.max(0, camAlt - gWorld + gWorld / EXAG); // 換算回真實海拔
-    altEl.textContent = realAlt >= 100000
-      ? Math.round(realAlt / 1000).toLocaleString() + " 公里"
-      : realAlt >= 10000
-        ? (realAlt / 1000).toFixed(1) + " 公里"
-        : Math.round(realAlt).toLocaleString() + " 公尺";
-  } catch (err) { /* transform 尚未就緒時略過 */ }
-}
-map.on("move", updateAltitude);
-map.on("load", updateAltitude);
+exagInput.addEventListener("input", () => map.setTerrain({ source: "dem", exaggeration: +exagInput.value }));
 
 /* ---------- 操作說明 ---------- */
 $("btnHelp").addEventListener("click", () => $("helpOverlay").classList.add("show"));
