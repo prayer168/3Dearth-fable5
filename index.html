@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>地球 3D 無人機 · 世界 50 大地景巡航</title>
+<meta name="description" content="駕駛虛擬無人機飛越真實 3D 地球，巡航世界 50 個知名地景：珠穆朗瑪峰、大峽谷、金字塔、馬丘比丘、雪梨歌劇院……真實衛星影像與真實地形。">
+<meta property="og:type" content="website">
+<meta property="og:title" content="地球 3D 無人機 · 世界 50 大地景巡航">
+<meta property="og:description" content="駕駛虛擬無人機飛越真實 3D 地球，巡航世界 50 個知名地景，真實衛星影像與真實地形。">
+<meta property="og:locale" content="zh_TW">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css">
+<style>
+  :root{
+    --panel-bg: rgba(10,20,35,.86);
+    --accent: #3fc1c9;
+    --accent2: #ffd166;
+    --text: #eef6fb;
+    --bar-h: 58px;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+  html,body{ width:100%; height:100%; overflow:hidden; font-family:"Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif; background:#02060d; }
+  #map{ position:fixed; inset:0; }
+
+  /* ---------- 左側地景導覽（可收合） ---------- */
+  #panel{
+    position:fixed; top:12px; left:12px; bottom:calc(var(--bar-h) + 20px); width:230px;
+    background:var(--panel-bg); border-radius:16px; color:var(--text);
+    display:flex; flex-direction:column; backdrop-filter:blur(8px);
+    box-shadow:0 4px 18px rgba(0,0,0,.45); z-index:20;
+    transition:transform .3s ease, opacity .3s ease;
+  }
+  #panel.hidden{ transform:translateX(-260px); opacity:0; pointer-events:none; }
+  #panel h2{ font-size:14px; padding:12px 14px 8px; color:var(--accent2); }
+  #panel h2 small{ color:#9fc1d4; font-weight:normal; }
+  #list{ flex:1; overflow-y:auto; padding:0 8px 10px; }
+  #list::-webkit-scrollbar{ width:5px; } #list::-webkit-scrollbar-thumb{ background:#3b566e; border-radius:3px; }
+  .grp{ position:sticky; top:0; background:rgba(10,20,35,.95); color:var(--accent); font-size:12px;
+    padding:6px 8px 4px; border-bottom:1px solid rgba(255,255,255,.08); z-index:1; }
+  .item{
+    display:flex; align-items:center; gap:8px;
+    padding:7px 8px; border-radius:10px; cursor:pointer; font-size:13px;
+    transition:background .15s;
+  }
+  .item:hover{ background:rgba(255,255,255,.1); }
+  .item.active{ background:rgba(63,193,201,.25); outline:1px solid var(--accent); }
+  .item .flag{ flex:none; }
+  .item .nm{ flex:1; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+
+  #panelToggle{
+    position:fixed; top:12px; left:12px; z-index:21;
+    width:42px; height:42px; border-radius:12px; border:none;
+    background:var(--panel-bg); color:var(--text); font-size:18px; cursor:pointer;
+    box-shadow:0 4px 12px rgba(0,0,0,.4); transition:left .3s ease;
+  }
+  #panelToggle.open{ left:254px; }
+
+  /* ---------- 靠近地景時的大名稱橫幅 ---------- */
+  #banner{
+    position:fixed; top:18px; left:50%; transform:translate(-50%,-90px);
+    background:linear-gradient(135deg, rgba(10,25,45,.92), rgba(20,60,80,.92));
+    border:1px solid rgba(63,193,201,.6); border-radius:16px;
+    color:#fff; padding:10px 26px; text-align:center; z-index:25;
+    box-shadow:0 6px 24px rgba(0,0,0,.5); backdrop-filter:blur(8px);
+    transition:transform .45s cubic-bezier(.2,.9,.3,1.2), opacity .35s; opacity:0; pointer-events:none;
+  }
+  #banner.show{ transform:translate(-50%,0); opacity:1; }
+  #banner .bn{ font-size:22px; font-weight:700; letter-spacing:1px; }
+  #banner .bc{ font-size:12px; color:var(--accent2); margin-top:2px; }
+
+  /* ---------- 資訊卡 ---------- */
+  #info{
+    position:fixed; right:12px; bottom:calc(var(--bar-h) + 20px); width:290px; max-width:calc(100vw - 24px);
+    background:var(--panel-bg); border-radius:16px; color:var(--text);
+    padding:14px 16px; backdrop-filter:blur(8px); z-index:20;
+    box-shadow:0 4px 16px rgba(0,0,0,.45); display:none;
+  }
+  #info.show{ display:block; }
+  #info .county{ font-size:11px; color:#0b1c2c; background:var(--accent2); border-radius:6px; padding:2px 8px; display:inline-block; }
+  #info h3{ font-size:17px; margin:6px 0 6px; color:#fff; }
+  #info p{ font-size:12.5px; line-height:1.7; color:#cfe3ee; }
+  #info .close{ position:absolute; top:8px; right:12px; cursor:pointer; color:#89a9bc; font-size:16px; border:none; background:none; }
+
+  /* ---------- 底部操作列 ---------- */
+  #bar{
+    position:fixed; left:50%; bottom:10px; transform:translateX(-50%);
+    height:var(--bar-h); max-width:calc(100vw - 20px);
+    background:var(--panel-bg); border-radius:16px; z-index:22;
+    display:flex; align-items:center; gap:10px; padding:0 14px;
+    box-shadow:0 4px 18px rgba(0,0,0,.5); backdrop-filter:blur(8px);
+  }
+  .btn{
+    background:rgba(255,255,255,.07); color:var(--text); border:none; border-radius:12px;
+    padding:9px 13px; font-size:13px; cursor:pointer; transition:background .15s;
+    font-family:inherit; white-space:nowrap;
+  }
+  .btn:hover{ background:rgba(63,193,201,.35); }
+  .btn.on{ background:rgba(63,193,201,.5); outline:1px solid var(--accent); }
+  .sliderBox{ color:#bcd6e4; font-size:11px; text-align:center; line-height:1.2; }
+  .sliderBox input{ width:86px; accent-color:var(--accent); display:block; margin:3px auto 0; }
+
+  /* ---------- 操作說明浮層 ---------- */
+  #helpOverlay{
+    position:fixed; inset:0; z-index:40; background:rgba(2,8,16,.72);
+    display:none; align-items:center; justify-content:center; backdrop-filter:blur(4px);
+  }
+  #helpOverlay.show{ display:flex; }
+  #helpCard{
+    background:var(--panel-bg); border-radius:18px; color:var(--text);
+    padding:24px 30px; max-width:520px; width:calc(100vw - 40px);
+    box-shadow:0 10px 40px rgba(0,0,0,.6); border:1px solid rgba(63,193,201,.35);
+  }
+  #helpCard h3{ color:var(--accent2); margin-bottom:12px; font-size:17px; }
+  #helpCard table{ width:100%; border-collapse:collapse; font-size:13px; }
+  #helpCard td{ padding:5px 6px; border-bottom:1px solid rgba(255,255,255,.08); color:#cfe3ee; }
+  #helpCard td:first-child{ color:#fff; white-space:nowrap; width:42%; }
+  #helpCard kbd{ background:rgba(255,255,255,.12); border-radius:5px; padding:1px 7px; font-family:inherit; font-size:12px; border:1px solid rgba(255,255,255,.2); }
+  #helpCard .ok{ display:block; margin:16px auto 0; }
+
+  /* ---------- 地景標記 ---------- */
+  .mk{ cursor:pointer; text-align:center; }
+  .mk .dot{ width:12px; height:12px; margin:0 auto; border-radius:50%;
+    background:var(--accent2); border:2px solid #fff; box-shadow:0 0 8px rgba(255,209,102,.9); }
+  .mk .lbl{ margin-top:3px; font-size:11px; color:#fff; background:rgba(10,20,35,.75);
+    padding:1px 7px; border-radius:8px; white-space:nowrap; display:none; }
+  body.zoomed .mk .lbl, .mk:hover .lbl{ display:inline-block; }
+
+  #loading{
+    position:fixed; inset:0; background:#02060d; z-index:99;
+    display:flex; flex-direction:column; gap:14px; align-items:center; justify-content:center;
+    color:#9fc1d4; font-size:15px; letter-spacing:2px; transition:opacity .6s;
+  }
+  #loading .globe{ font-size:52px; animation:spin 3s linear infinite; }
+  @keyframes spin{ from{ transform:rotate(0) } to{ transform:rotate(360deg) } }
+
+  .maplibregl-ctrl-attrib{ font-size:10px; }
+
+  @media (max-width: 860px){
+    #panel{ width:200px; }
+    #panelToggle.open{ left:224px; }
+    #bar{ gap:6px; padding:0 8px; }
+    .btn{ padding:8px 9px; font-size:12px; }
+    .sliderBox{ display:none; }
+    #banner .bn{ font-size:17px; }
+    #info{ bottom:calc(var(--bar-h) + 16px); width:240px; }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<button id="panelToggle" class="open" aria-label="開關地景導覽">☰</button>
+<div id="panel">
+  <h2>🌏 世界 50 大地景 <small>點選即飛往</small></h2>
+  <div id="list"></div>
+</div>
+
+<div id="banner"><div class="bn" id="bannerName"></div><div class="bc" id="bannerCountry"></div></div>
+
+<div id="info">
+  <button class="close" id="infoClose">✕</button>
+  <span class="county" id="infoCountry"></span>
+  <h3 id="infoName"></h3>
+  <p id="infoDesc"></p>
+</div>
+
+<div id="bar">
+  <button class="btn" id="btnTour" title="自動依序巡航 50 個地景">▶️ 自動巡航</button>
+  <button class="btn" id="btnPrev" title="上一個地景">⏮</button>
+  <button class="btn" id="btnNext" title="下一個地景">⏭</button>
+  <button class="btn" id="btnHome" title="回到太空看整個地球">🌍 地球全景</button>
+  <div class="sliderBox">飛行速度<input type="range" id="speed" min="0.3" max="3" step="0.1" value="1"></div>
+  <div class="sliderBox">地形高度<input type="range" id="exag" min="1" max="3" step="0.1" value="1.5"></div>
+  <button class="btn" id="btnHelp" title="鍵盤與滑鼠操作說明">❓ 操作說明</button>
+</div>
+
+<div id="helpOverlay">
+  <div id="helpCard">
+    <h3>🕹️ 無人機操作說明</h3>
+    <table>
+      <tr><td>🖱️ 滑鼠<b>左鍵</b>拖曳</td><td>平移（移動無人機位置）</td></tr>
+      <tr><td>🖱️ 滑鼠<b>右鍵</b>拖曳</td><td>旋轉視角、調整俯仰角</td></tr>
+      <tr><td>🖱️ 滑鼠<b>滾輪</b></td><td>前進（俯衝拉近）／後退（爬升拉遠）</td></tr>
+      <tr><td><kbd>W</kbd>/<kbd>S</kbd> 或 <kbd>↑</kbd>/<kbd>↓</kbd></td><td>向前／向後飛行</td></tr>
+      <tr><td><kbd>A</kbd>/<kbd>D</kbd> 或 <kbd>←</kbd>/<kbd>→</kbd></td><td>左轉／右轉機頭</td></tr>
+      <tr><td><kbd>Q</kbd>/<kbd>E</kbd></td><td>鏡頭抬頭／低頭</td></tr>
+      <tr><td><kbd>Space</kbd>／<kbd>Shift</kbd></td><td>無人機上升／下降</td></tr>
+      <tr><td>👆 觸控</td><td>單指拖曳平移、雙指縮放旋轉</td></tr>
+    </table>
+    <button class="btn ok" id="helpClose">我知道了，開始飛！</button>
+  </div>
+</div>
+
+<div id="loading"><div class="globe">🌍</div>正在載入真實地球影像與地形…</div>
+
+<script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
+<script>
+"use strict";
+/* =========================================================
+   地球 3D 無人機 · 世界 50 大地景巡航
+   影像：Esri World Imagery（真實衛星影像）
+   地形：AWS Terrain Tiles（真實高程資料，terrarium 編碼）
+   ========================================================= */
+
+/* ---------- 50 個地景資料 ---------- */
+const SPOTS = [
+ // 亞洲
+ {g:"亞洲", f:"🏔️", n:"珠穆朗瑪峰", c:"尼泊爾／中國", lat:27.9881, lon:86.9250, z:11.6, p:68, d:"世界最高峰，海拔 8,848.86 公尺，喜馬拉雅山脈的屋脊，登山者的終極夢想。"},
+ {g:"亞洲", f:"🧱", n:"萬里長城（慕田峪）", c:"中國", lat:40.4319, lon:116.5704, z:13.8, p:62, d:"綿延兩萬多公里的古代防禦工程，沿著山稜起伏，是太空中也認得出的人類奇蹟。"},
+ {g:"亞洲", f:"🗻", n:"富士山", c:"日本", lat:35.3606, lon:138.7274, z:11.6, p:62, d:"日本最高峰（3,776 公尺），對稱優美的成層火山，是日本的精神象徵。"},
+ {g:"亞洲", f:"🕌", n:"泰姬瑪哈陵", c:"印度", lat:27.1751, lon:78.0421, z:15.3, p:55, d:"蒙兀兒皇帝為愛妻建造的白色大理石陵墓，被譽為「永恆面頰上的一滴眼淚」。"},
+ {g:"亞洲", f:"🛕", n:"吳哥窟", c:"柬埔寨", lat:13.4125, lon:103.8670, z:14.6, p:55, d:"世界最大的宗教建築群，高棉帝國的曠世傑作，日出時的倒影舉世聞名。"},
+ {g:"亞洲", f:"⛵", n:"下龍灣", c:"越南", lat:20.9101, lon:107.1839, z:12.0, p:60, d:"近兩千座石灰岩島嶼散布在翡翠色海面上，傳說是巨龍下海時留下的地景。"},
+ {g:"亞洲", f:"🏛️", n:"佩特拉古城", c:"約旦", lat:30.3285, lon:35.4444, z:14.4, p:60, d:"在玫瑰色岩壁中鑿出的神祕古城，穿過蛇道峽谷就會見到壯麗的卡茲尼神殿。"},
+ {g:"亞洲", f:"🏙️", n:"哈里發塔", c:"阿拉伯聯合大公國", lat:25.1972, lon:55.2744, z:14.4, p:60, d:"位於杜拜、高 828 公尺的世界第一高樓，從沙漠中拔地而起的現代奇蹟。"},
+ {g:"亞洲", f:"🏢", n:"台北 101", c:"台灣", lat:25.0339, lon:121.5645, z:14.6, p:60, d:"曾是世界第一高樓（508 公尺），造型像節節高升的竹子，跨年煙火聞名全球。"},
+ {g:"亞洲", f:"⛰️", n:"玉山", c:"台灣", lat:23.4700, lon:120.9573, z:12.0, p:63, d:"東北亞最高峰（3,952 公尺），台灣的屋脊，冬季雪白如玉而得名。"},
+ {g:"亞洲", f:"🛳️", n:"濱海灣金沙", c:"新加坡", lat:1.2834, lon:103.8607, z:14.6, p:58, d:"三座大樓頂著一艘「空中船」的地標建築，俯瞰新加坡濱海灣花園。"},
+ {g:"亞洲", f:"🏯", n:"布達拉宮", c:"中國（西藏）", lat:29.6579, lon:91.1174, z:14.4, p:58, d:"矗立在海拔 3,700 公尺拉薩紅山上的宮殿，是世界上海拔最高的宏偉古建築群。"},
+ {g:"亞洲", f:"🎈", n:"卡帕多奇亞", c:"土耳其", lat:38.6431, lon:34.8289, z:13.0, p:60, d:"火山岩被侵蝕成奇幻的「精靈煙囪」，清晨數百顆熱氣球升空的畫面如夢似幻。"},
+ {g:"亞洲", f:"⛩️", n:"京都清水寺", c:"日本", lat:34.9949, lon:135.7850, z:15.3, p:55, d:"懸在山坡上的木造「清水舞台」不用一根釘子，春櫻秋楓時美不勝收。"},
+ // 歐洲
+ {g:"歐洲", f:"🗼", n:"艾菲爾鐵塔", c:"法國", lat:48.8584, lon:2.2945, z:15.0, p:60, d:"1889 年世界博覽會的鋼鐵巨作，高 330 公尺，是巴黎與浪漫的代名詞。"},
+ {g:"歐洲", f:"🏟️", n:"羅馬競技場", c:"義大利", lat:41.8902, lon:12.4922, z:15.3, p:55, d:"兩千年前可容納五萬人的圓形劇場，古羅馬帝國輝煌工程的最佳見證。"},
+ {g:"歐洲", f:"🏗️", n:"比薩斜塔", c:"義大利", lat:43.7230, lon:10.3966, z:15.5, p:55, d:"因地基不均而傾斜的白色鐘樓，傳說伽利略曾在塔上做自由落體實驗。"},
+ {g:"歐洲", f:"🏖️", n:"聖托里尼", c:"希臘", lat:36.4614, lon:25.3760, z:13.0, p:60, d:"藍頂白牆的房屋沿著火山口懸崖排列，愛琴海最夢幻的日落小島。"},
+ {g:"歐洲", f:"🏛️", n:"雅典衛城", c:"希臘", lat:37.9715, lon:23.7257, z:15.0, p:55, d:"帕德嫩神殿所在的山丘聖域，西方文明與民主的搖籃。"},
+ {g:"歐洲", f:"🕰️", n:"大笨鐘與國會大廈", c:"英國", lat:51.5007, lon:-0.1246, z:15.0, p:58, d:"泰晤士河畔的哥德式國會大廈與大鐘塔，倫敦最經典的天際線。"},
+ {g:"歐洲", f:"🪨", n:"巨石陣", c:"英國", lat:51.1789, lon:-1.8262, z:15.5, p:50, d:"五千年前的巨石環，每塊重達數十噸，至今仍是考古學最大的謎團之一。"},
+ {g:"歐洲", f:"⛪", n:"聖家堂", c:"西班牙", lat:41.4036, lon:2.1744, z:15.3, p:55, d:"建築師高第的畢生傑作，1882 年動工至今仍在興建的夢幻大教堂。"},
+ {g:"歐洲", f:"🏔️", n:"馬特洪峰", c:"瑞士／義大利", lat:45.9766, lon:7.6585, z:12.0, p:66, d:"金字塔形的阿爾卑斯名峰（4,478 公尺），三角巧克力盒上的主角。"},
+ {g:"歐洲", f:"🏰", n:"新天鵝堡", c:"德國", lat:47.5576, lon:10.7498, z:14.4, p:58, d:"路德維希二世的童話城堡，迪士尼睡美人城堡的靈感來源。"},
+ {g:"歐洲", f:"🚢", n:"蓋倫格峽灣", c:"挪威", lat:62.1049, lon:7.2054, z:11.6, p:63, d:"冰河切割出的深邃峽灣，兩側千公尺高的絕壁掛著「七姊妹瀑布」。"},
+ {g:"歐洲", f:"💦", n:"黃金瀑布", c:"冰島", lat:64.3271, lon:-20.1199, z:13.4, p:55, d:"冰島「黃金圈」的招牌瀑布，冰河水分兩段轟然墜入峽谷，晴天常見彩虹。"},
+ // 非洲
+ {g:"非洲", f:"🔺", n:"吉薩金字塔群", c:"埃及", lat:29.9792, lon:31.1342, z:14.2, p:55, d:"四千五百年前的法老陵墓，古代世界七大奇蹟中唯一留存至今的一座。"},
+ {g:"非洲", f:"🌋", n:"吉力馬札羅山", c:"坦尚尼亞", lat:-3.0674, lon:37.3556, z:11.0, p:62, d:"非洲最高峰（5,895 公尺），赤道旁卻終年頂著雪冠的孤傲火山。"},
+ {g:"非洲", f:"🌊", n:"維多利亞瀑布", c:"尚比亞／辛巴威", lat:-17.9243, lon:25.8572, z:13.4, p:55, d:"寬 1.7 公里的「雷霆之霧」，尚比西河整條墜入裂谷，水霧數十公里外可見。"},
+ {g:"非洲", f:"🗻", n:"桌山", c:"南非", lat:-33.9628, lon:18.4098, z:12.4, p:60, d:"山頂平坦如桌面的開普敦地標，雲霧鋪上山頂時被稱為「桌巾」。"},
+ {g:"非洲", f:"🦁", n:"塞倫蓋提大草原", c:"坦尚尼亞", lat:-2.3333, lon:34.8333, z:11.0, p:55, d:"每年數百萬頭牛羚大遷徙的舞台，地球上最壯觀的野生動物王國。"},
+ // 北美洲
+ {g:"北美洲", f:"🗽", n:"自由女神像", c:"美國", lat:40.6892, lon:-74.0445, z:15.0, p:58, d:"法國送給美國的百年賀禮，高舉火炬迎接來到紐約港的每一個人。"},
+ {g:"北美洲", f:"🏜️", n:"大峽谷", c:"美國", lat:36.0544, lon:-112.1401, z:12.0, p:66, d:"科羅拉多河花了數百萬年刻出的巨壑，深達 1.6 公里，岩層記錄著地球歷史。"},
+ {g:"北美洲", f:"💧", n:"尼加拉瀑布", c:"美國／加拿大", lat:43.0770, lon:-79.0750, z:14.0, p:55, d:"三座瀑布組成的大水簾，馬蹄瀑布每秒傾瀉數千噸河水，氣勢磅礡。"},
+ {g:"北美洲", f:"⛲", n:"黃石公園·老忠實間歇泉", c:"美國", lat:44.4605, lon:-110.8281, z:13.4, p:55, d:"世界第一座國家公園的明星，每 90 分鐘左右準時噴出數十公尺高的水柱。"},
+ {g:"北美洲", f:"🧗", n:"優勝美地國家公園", c:"美國", lat:37.7456, lon:-119.5936, z:12.4, p:64, d:"冰河雕出的花崗岩聖殿，酋長岩與半圓丘是全球攀岩者的朝聖地。"},
+ {g:"北美洲", f:"🌉", n:"金門大橋", c:"美國", lat:37.8199, lon:-122.4783, z:13.4, p:58, d:"橫跨舊金山灣口的「國際橘」吊橋，常在霧中若隱若現，優雅又雄偉。"},
+ {g:"北美洲", f:"🌋", n:"夏威夷·基拉韋亞火山", c:"美國", lat:19.4069, lon:-155.2834, z:12.4, p:60, d:"地球上最活躍的火山之一，熔岩流入海中不斷造出新的土地。"},
+ {g:"北美洲", f:"🛕", n:"奇琴伊察", c:"墨西哥", lat:20.6843, lon:-88.5678, z:15.0, p:55, d:"馬雅文明的金字塔神廟，春分時羽蛇神的影子會沿著階梯緩緩滑下。"},
+ {g:"北美洲", f:"🏞️", n:"路易斯湖（洛磯山脈）", c:"加拿大", lat:51.4254, lon:-116.2317, z:13.0, p:60, d:"冰河融水呈現夢幻的土耳其藍，被雪峰與冰川環抱的「洛磯山寶石」。"},
+ // 南美洲
+ {g:"南美洲", f:"🏯", n:"馬丘比丘", c:"祕魯", lat:-13.1631, lon:-72.5450, z:14.0, p:62, d:"藏在安地斯山脊上的印加「天空之城」，直到 1911 年才被世人重新發現。"},
+ {g:"南美洲", f:"🙌", n:"里約熱內盧基督像", c:"巴西", lat:-22.9519, lon:-43.2105, z:14.0, p:60, d:"張開雙臂的巨大基督像立於駝背山頂，擁抱整座里約與瓜納巴拉灣。"},
+ {g:"南美洲", f:"🌈", n:"伊瓜蘇瀑布", c:"巴西／阿根廷", lat:-25.6953, lon:-54.4367, z:13.0, p:58, d:"275 道瀑布在雨林中一字排開，「魔鬼的咽喉」轟鳴聲震耳欲聾。"},
+ {g:"南美洲", f:"🪞", n:"烏尤尼鹽湖", c:"玻利維亞", lat:-20.1338, lon:-67.4891, z:11.6, p:55, d:"世界最大的鹽沼，雨後化身「天空之鏡」，天地融為一體。"},
+ {g:"南美洲", f:"🗿", n:"復活節島摩艾石像", c:"智利", lat:-27.1258, lon:-109.2769, z:13.0, p:55, d:"太平洋孤島上近千尊神祕巨石像，背對大海守望著島上的子民。"},
+ // 大洋洲
+ {g:"大洋洲", f:"🎭", n:"雪梨歌劇院", c:"澳洲", lat:-33.8568, lon:151.2153, z:14.6, p:58, d:"白色風帆造型的表演藝術殿堂，佇立雪梨港邊，20 世紀最具代表性的建築。"},
+ {g:"大洋洲", f:"🟥", n:"烏魯魯（艾爾斯岩）", c:"澳洲", lat:-25.3444, lon:131.0369, z:12.4, p:60, d:"沙漠中央的巨大紅色砂岩，日出日落時變換色彩，是原住民的聖地。"},
+ {g:"大洋洲", f:"🐠", n:"大堡礁", c:"澳洲", lat:-18.2871, lon:147.6992, z:10.5, p:50, d:"綿延 2,300 公里的世界最大珊瑚礁群，從太空也看得見的海洋生命之城。"},
+ {g:"大洋洲", f:"⛴️", n:"米佛峽灣", c:"紐西蘭", lat:-44.6414, lon:167.8974, z:12.0, p:63, d:"被稱為「世界第八大奇景」的冰河峽灣，麥特爾峰直插雲霄倒映水中。"},
+ {g:"大洋洲", f:"🏝️", n:"波拉波拉島", c:"法屬玻里尼西亞", lat:-16.5004, lon:-151.7415, z:12.0, p:55, d:"火山島被藍綠色潟湖與環礁圍繞，被譽為「太平洋上的珍珠」。"},
+];
+
+/* ---------- 建立地圖：真實衛星影像 + 真實地形 + 3D 地球 ---------- */
+const style = {
+  version: 8,
+  projection: { type: "globe" },
+  sources: {
+    sat: {
+      type: "raster",
+      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+      tileSize: 256, maxzoom: 19,
+      attribution: "影像 © Esri, Maxar, Earthstar Geographics｜地形 © Mapzen/AWS Terrain Tiles"
+    },
+    dem: {
+      type: "raster-dem",
+      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+      encoding: "terrarium", tileSize: 256, maxzoom: 15
+    }
+  },
+  layers: [{ id: "sat", type: "raster", source: "sat" }],
+  terrain: { source: "dem", exaggeration: 1.5 },
+  sky: {
+    "sky-color": "#79b6f2",
+    "horizon-color": "#e8f4ff",
+    "sky-horizon-blend": 0.6,
+    "atmosphere-blend": ["interpolate", ["linear"], ["zoom"], 0, 1, 8, 1, 10, 0]
+  }
+};
+
+const map = new maplibregl.Map({
+  container: "map",
+  style,
+  center: [121, 23.5],
+  zoom: 1.6,
+  pitch: 0,
+  bearing: 0,
+  maxPitch: 85,
+  attributionControl: { compact: true }
+});
+window._map = map;               // 供除錯與教學觀察
+map.keyboard.disable();          // 改用自訂的無人機鍵盤操作
+map.touchZoomRotate.enable();
+map.dragRotate.enable();         // 滑鼠右鍵拖曳＝旋轉/俯仰
+
+/* ---------- DOM ---------- */
+const $ = id => document.getElementById(id);
+const listEl = $("list"), panel = $("panel"), toggle = $("panelToggle");
+const banner = $("banner"), bannerName = $("bannerName"), bannerCountry = $("bannerCountry");
+const info = $("info"), infoName = $("infoName"), infoCountry = $("infoCountry"), infoDesc = $("infoDesc");
+const speedInput = $("speed"), exagInput = $("exag");
+let speedFactor = 1;
+
+/* ---------- 左側清單（依洲分組，可收合） ---------- */
+let activeIdx = -1;
+(function buildList(){
+  let lastGroup = "";
+  SPOTS.forEach((s, i) => {
+    if (s.g !== lastGroup) {
+      lastGroup = s.g;
+      const count = SPOTS.filter(x => x.g === s.g).length;
+      const g = document.createElement("div");
+      g.className = "grp"; g.textContent = `${s.g}（${count}）`;
+      listEl.appendChild(g);
+    }
+    const el = document.createElement("div");
+    el.className = "item"; el.dataset.idx = i;
+    el.innerHTML = `<span class="flag">${s.f}</span><span class="nm">${s.n}</span>`;
+    el.addEventListener("click", () => { stopTour(); flyToSpot(i); });
+    listEl.appendChild(el);
+  });
+})();
+function setActive(i){
+  activeIdx = i;
+  listEl.querySelectorAll(".item").forEach(el => el.classList.toggle("active", +el.dataset.idx === i));
+  const el = listEl.querySelector(`.item[data-idx="${i}"]`);
+  if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+toggle.addEventListener("click", () => {
+  const hidden = panel.classList.toggle("hidden");
+  toggle.classList.toggle("open", !hidden);
+});
+
+/* ---------- 地景標記 ---------- */
+SPOTS.forEach((s, i) => {
+  const el = document.createElement("div");
+  el.className = "mk";
+  el.innerHTML = `<div class="dot"></div><div class="lbl">${s.f} ${s.n}</div>`;
+  el.addEventListener("click", e => { e.stopPropagation(); stopTour(); flyToSpot(i); });
+  new maplibregl.Marker({ element: el, anchor: "center" }).setLngLat([s.lon, s.lat]).addTo(map);
+});
+
+/* ---------- 飛往地景 ---------- */
+function flyToSpot(i, opts = {}){
+  const s = SPOTS[i];
+  userInteracted = true;
+  setActive(i);
+  showInfo(s);
+  map.flyTo({
+    center: [s.lon, s.lat],
+    zoom: s.z, pitch: s.p,
+    bearing: opts.bearing !== undefined ? opts.bearing : (Math.random() * 90 - 45),
+    speed: 0.75 * speedFactor,
+    curve: 1.6,
+    essential: true
+  });
+}
+function showInfo(s){
+  infoName.textContent = `${s.f} ${s.n}`;
+  infoCountry.textContent = s.c;
+  infoDesc.textContent = s.d;
+  info.classList.add("show");
+}
+$("infoClose").addEventListener("click", () => info.classList.remove("show"));
+
+/* ---------- 靠近地景時顯示名稱橫幅 ---------- */
+function haversineKm(lat1, lon1, lat2, lon2){
+  const R = 6371, toRad = x => x * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+let bannerSpot = null;
+function updateBanner(){
+  const zoom = map.getZoom();
+  document.body.classList.toggle("zoomed", zoom >= 10.5);
+  let near = null;
+  if (zoom >= 9) {
+    const c = map.getCenter();
+    let best = Infinity;
+    for (const s of SPOTS) {
+      const d = haversineKm(c.lat, c.lng, s.lat, s.lon);
+      if (d < best) { best = d; near = s; }
+    }
+    // 越低空（zoom 越大）判定範圍越小，避免遠遠就跳名稱
+    const limit = Math.max(6, 2200 / Math.pow(2, zoom - 1));
+    if (best > limit) near = null;
+  }
+  if (near !== bannerSpot) {
+    bannerSpot = near;
+    if (near) {
+      bannerName.textContent = `📍 ${near.f} ${near.n}`;
+      bannerCountry.textContent = near.c;
+      banner.classList.add("show");
+    } else {
+      banner.classList.remove("show");
+    }
+  }
+}
+map.on("move", updateBanner);
+
+/* ---------- 自動巡航 ---------- */
+let touring = false, tourTimer = null, tourIdx = -1;
+const btnTour = $("btnTour");
+function startTour(){
+  touring = true;
+  btnTour.classList.add("on");
+  btnTour.textContent = "⏸ 暫停巡航";
+  nextTourStop();
+}
+function stopTour(){
+  touring = false;
+  clearTimeout(tourTimer);
+  btnTour.classList.remove("on");
+  btnTour.textContent = "▶️ 自動巡航";
+}
+function nextTourStop(){
+  if (!touring) return;
+  tourIdx = (activeIdx + 1) % SPOTS.length;
+  flyToSpot(tourIdx);
+  map.once("moveend", () => {
+    if (!touring) return;
+    // 停留並環繞一圈感受地形
+    const dwell = 5000 / speedFactor;
+    const startBearing = map.getBearing(), t0 = performance.now();
+    (function orbit(){
+      if (!touring || activeIdx !== tourIdx) return;
+      const t = performance.now() - t0;
+      if (t < dwell) {
+        map.setBearing(startBearing + t * 0.012 * speedFactor);
+        requestAnimationFrame(orbit);
+      }
+    })();
+    tourTimer = setTimeout(nextTourStop, dwell + 400);
+  });
+}
+btnTour.addEventListener("click", () => touring ? stopTour() : startTour());
+$("btnNext").addEventListener("click", () => { stopTour(); flyToSpot((activeIdx + 1) % SPOTS.length); });
+$("btnPrev").addEventListener("click", () => { stopTour(); flyToSpot((activeIdx - 1 + SPOTS.length) % SPOTS.length); });
+$("btnHome").addEventListener("click", () => {
+  stopTour(); info.classList.remove("show"); setActive(-1);
+  map.flyTo({ center: [121, 23.5], zoom: 1.6, pitch: 0, bearing: 0, speed: 0.9, essential: true });
+});
+
+/* ---------- 滑桿 ---------- */
+speedInput.addEventListener("input", () => speedFactor = +speedInput.value);
+exagInput.addEventListener("input", () => map.setTerrain({ source: "dem", exaggeration: +exagInput.value }));
+
+/* ---------- 操作說明 ---------- */
+$("btnHelp").addEventListener("click", () => $("helpOverlay").classList.add("show"));
+$("helpClose").addEventListener("click", () => $("helpOverlay").classList.remove("show"));
+$("helpOverlay").addEventListener("click", e => { if (e.target.id === "helpOverlay") $("helpOverlay").classList.remove("show"); });
+
+/* ---------- 鍵盤無人機操作 ---------- */
+const keys = {};
+window.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT") return;
+  keys[e.code] = true;
+  if (["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code)) e.preventDefault();
+  if (e.code !== "Tab") userInteracted = true;
+});
+window.addEventListener("keyup", e => keys[e.code] = false);
+
+function droneStep(){
+  const anyKey = Object.keys(keys).some(k => keys[k]);
+  if (!anyKey) return;
+
+  let bearing = map.getBearing(), pitch = map.getPitch(), zoom = map.getZoom();
+  const c = map.getCenter();
+  let moved = false;
+
+  const turn = 1.6 * speedFactor;
+  if (keys.KeyA || keys.ArrowLeft)  { bearing -= turn; moved = true; }
+  if (keys.KeyD || keys.ArrowRight) { bearing += turn; moved = true; }
+  if (keys.KeyQ) { pitch = Math.min(85, pitch + 1.1); moved = true; }
+  if (keys.KeyE) { pitch = Math.max(0, pitch - 1.1); moved = true; }
+  if (keys.Space) { zoom = Math.max(1, zoom - 0.02 * speedFactor); moved = true; }        // 上升
+  if (keys.ShiftLeft || keys.ShiftRight) { zoom = Math.min(18.5, zoom + 0.02 * speedFactor); moved = true; } // 下降
+
+  let dir = 0;
+  if (keys.KeyW || keys.ArrowUp) dir += 1;
+  if (keys.KeyS || keys.ArrowDown) dir -= 1;
+
+  let lat = c.lat, lon = c.lng;
+  if (dir !== 0) {
+    const mpp = 156543.03392 * Math.cos(c.lat * Math.PI / 180) / Math.pow(2, zoom); // 公尺/像素
+    const step = mpp * 9 * speedFactor * dir;
+    const rad = bearing * Math.PI / 180;
+    lat += (step * Math.cos(rad)) / 111320;
+    lon += (step * Math.sin(rad)) / (111320 * Math.max(0.05, Math.cos(c.lat * Math.PI / 180)));
+    lat = Math.max(-85, Math.min(85, lat));
+    moved = true;
+  }
+  if (moved) {
+    map.stop();
+    map.jumpTo({ center: [lon, lat], bearing, pitch, zoom });
+  }
+}
+
+/* ---------- 開場：緩慢自轉的地球 ---------- */
+let userInteracted = false;
+["mousedown","wheel","touchstart"].forEach(ev =>
+  map.getCanvas().addEventListener(ev, () => userInteracted = true, { passive: true }));
+
+(function loop(){
+  requestAnimationFrame(loop);
+  if (!userInteracted && !touring && map.getZoom() < 4) {
+    const c = map.getCenter();
+    map.jumpTo({ center: [c.lng + 0.05, c.lat] });
+  }
+  droneStep();
+})();
+
+/* ---------- 載入完成 ---------- */
+map.on("load", () => {
+  const ld = $("loading");
+  ld.style.opacity = "0";
+  setTimeout(() => ld.remove(), 700);
+});
+map.on("error", e => console.warn("map error:", e && e.error));
+</script>
+</body>
+</html>
